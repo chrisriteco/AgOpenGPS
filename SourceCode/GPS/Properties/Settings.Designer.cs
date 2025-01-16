@@ -3050,7 +3050,7 @@ namespace AgOpenGPS.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("10")]
+        [global::System.Configuration.DefaultSettingValueAttribute("3")]
         public int setAS_numGuideLines {
             get {
                 return ((int)(this["setAS_numGuideLines"]));
