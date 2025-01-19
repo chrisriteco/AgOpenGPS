@@ -170,9 +170,11 @@ namespace AgOpenGPS
                                 break;
                             if (ahrs.imuRoll > 25 || ahrs.imuRoll < -25) ahrs.imuRoll = 0;
                             //Heading
-                            ahrs.imuHeading = (Int16)((data[6] << 8) + data[5]);
-                            ahrs.imuHeading *= 0.1;
-                            
+                            // CR START
+                            //ahrs.imuHeading = (Int16)((data[6] << 8) + data[5]);
+                            //ahrs.imuHeading *= 0.1;
+                            // CR STOP
+
                             //Roll
                             double rollK = (Int16)((data[8] << 8) + data[7]);
 

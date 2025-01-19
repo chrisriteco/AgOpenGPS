@@ -1045,6 +1045,42 @@ namespace AgOpenGPS
                 SetForegroundWindow(processName[0].MainWindowHandle);
             }
         }
+
+        // CR START
+        private void btnStartDuinControl_Click(object sender, EventArgs e)
+        {
+            Process[] processName = Process.GetProcessesByName("DuinControl");
+            if (processName.Length == 0)
+            {
+                //Start application here
+                //DirectoryInfo di = new DirectoryInfo(Application.StartupPath);
+                string strPath = "c:\\@data\\DuinControl\\DuinControl.exe";
+
+                try
+                {
+                    //TimedMessageBox(2000, "Please Wait", "Starting AgIO");
+                    ProcessStartInfo processInfo = new ProcessStartInfo();
+                    processInfo.FileName = strPath;
+                    //processInfo.ErrorDialog = true;
+                    //processInfo.UseShellExecute = false;
+                    processInfo.WorkingDirectory = Path.GetDirectoryName(strPath);
+                    Process proc = Process.Start(processInfo);
+                }
+                catch
+                {
+                    TimedMessageBox(2000, "No File Found", "Can't Find DuinControl");
+                }
+            }
+            else
+            {
+                //Set foreground window
+                ShowWindow(processName[0].MainWindowHandle, 9);
+                SetForegroundWindow(processName[0].MainWindowHandle);
+            }
+        }
+        // CR STOP
+
+
         private void btnAutoSteerConfig_Click(object sender, EventArgs e)
         {
             //check if window already exists

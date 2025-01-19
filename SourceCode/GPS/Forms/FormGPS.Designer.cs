@@ -1652,6 +1652,7 @@
             this.lblSpeed.TabIndex = 116;
             this.lblSpeed.Text = "88.88";
             this.lblSpeed.TextAlign = System.Drawing.ContentAlignment.BottomCenter;
+            this.lblSpeed.Click += new System.EventHandler(this.btnStartDuinControl_Click);
             // 
             // lblFix
             // 
