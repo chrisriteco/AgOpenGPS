@@ -85,6 +85,8 @@ namespace AgOpenGPS
                                     pn.headingTrueDual = temp + pn.headingTrueDualOffset;
                                     if (pn.headingTrueDual >= 360) pn.headingTrueDual -= 360;
                                     else if (pn.headingTrueDual < 0) pn.headingTrueDual += 360;
+
+                                    if (ahrs.isDualAsIMU) ahrs.imuHeading = pn.headingTrueDual;
                                 }
 
                                 //from single antenna sentences (VTG,RMC)
@@ -272,7 +274,7 @@ namespace AgOpenGPS
                             }
                             break;
                         }
-                    case 222: // DE
+                    case 222: // 0xDE
                         {
                             //{ 0x80, 0x81, 0x7f, 222, number bytes, mask, command CRC };
                             if (data.Length < 6) break;
@@ -282,6 +284,12 @@ namespace AgOpenGPS
                                 if ((data[6] & 1) != 1) { trk.NudgeTrack(-dist); }
                                 if ((data[6] & 1) == 1) { trk.NudgeTrack(dist); }
                             }
+                            if (((data[5] & 2) == 2)) //mask bit #1 set and command bit #0 cycle line to the 0 = left 1 = right
+                            {
+                                if ((data[6] & 1) != 1) {  btnCycleLines.PerformClick(); }
+                                if ((data[6] & 1) == 1) { btnCycleLinesBk.PerformClick(); }
+                            }
+                           
                             break;
                         }
 
