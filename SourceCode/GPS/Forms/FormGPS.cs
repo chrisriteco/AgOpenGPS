@@ -357,6 +357,7 @@ namespace AgOpenGPS
                 + DateTime.Now.ToString("f", CultureInfo.InvariantCulture));
             Log.EventWriter("AOG Version: " + Application.ProductVersion.ToString(CultureInfo.InvariantCulture));
 
+            Properties.Settings.Default.setDisplay_isTermsAccepted = true;
             if (!Properties.Settings.Default.setDisplay_isTermsAccepted)
             {
                 using (var form = new Form_First(this))

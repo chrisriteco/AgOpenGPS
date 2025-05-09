@@ -529,6 +529,7 @@ namespace AgOpenGPS
                         }
                     }
 
+                    /*
                     if (Program.IsDevelopVersion)
                     {
                         DrawVersion("DEVELOP VERSION");
@@ -537,6 +538,7 @@ namespace AgOpenGPS
                     {
                         DrawVersion("Beta Testing v" + Program.SemVer);
                     }
+                    */
 
                     if (pn.age > pn.ageAlarm) DrawAge();
 
