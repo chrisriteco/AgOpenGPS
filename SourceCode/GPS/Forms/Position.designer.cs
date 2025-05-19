@@ -152,7 +152,7 @@ namespace AgOpenGPS
 
             if (Properties.Settings.Default.setGPS_headingFromWhichSource == "Dual" && ahrs.autoSwitchDualFixOn)
             {
-                if (Math.Abs(pn.speed) > ahrs.autoSwitchDualFixSpeed)
+                if (!isReverse && Math.Abs(pn.speed) > ahrs.autoSwitchDualFixSpeed)
                 {
                     headingFromSource = "Fix";
                     ahrs.isDualAsIMU = true;
