@@ -26,7 +26,7 @@ namespace AgOpenGPS
         {
             lblVersion.Text = "Version " + Program.SemVer;
             // CR START
-            lblVersion.Text = "Version CR67_1.2";
+            lblVersion.Text = "Version CR67_1.3";
             // CR STOP
 
             // Add a link to the LinkLabel.

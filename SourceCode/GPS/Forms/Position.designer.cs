@@ -102,6 +102,7 @@ namespace AgOpenGPS
         private double nowHz = 0, filteredDelta = 0, delta = 0;
 
         public bool isRTK_AlarmOn, isRTK_KillAutosteer;
+        public bool isCrDistanceAlert = false;
 
         public double headlandDistanceDelta = 0, boundaryDistanceDelta = 0;
 
@@ -164,6 +165,23 @@ namespace AgOpenGPS
                     ahrs.imuHeading = 99999;
                 }
             }
+
+            // CR
+            int crTempSett = Properties.Settings.Default.setArdMac_setting0;
+            bool crCboxIsHydOnChecked = ((crTempSett & 2) == 2);
+
+            if (crCboxIsHydOnChecked)
+            {
+                if ((fd.distanceUser - fd.crDistanceAlerterStartDistance) > Properties.Settings.Default.setVehicle_hydraulicLiftLookAhead)
+                {
+                    if (!isCrDistanceAlert)
+                    {
+                        isCrDistanceAlert = true;
+                        if (sounds.isHydLiftSoundOn) sounds.sndHydLiftUp.Play();
+                    }
+                }
+            }
+            // CR END
 
             #region Heading
             switch (headingFromSource)
@@ -338,8 +356,10 @@ namespace AgOpenGPS
 
                         //save a copy of previous for jump test
                         //jumpFix.easting = stepFixPts[0].easting; jumpFix.northing = stepFixPts[0].northing;
-                        
+
                         if ((fd.distanceUser += distanceCurrentStepFix) > 9999) fd.distanceUser = 0;
+
+                  
 
                         double minFixHeadingDistSquared = minHeadingStepDist * minHeadingStepDist;
                         fixToFixHeadingDistance = 0;

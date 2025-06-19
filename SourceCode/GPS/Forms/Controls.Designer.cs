@@ -191,6 +191,17 @@ namespace AgOpenGPS
                     {
                         yt.ResetYouTurn();
                     }
+
+                    // CR
+                    int crTempSett = Properties.Settings.Default.setArdMac_setting0;
+                    bool crCboxIsHydOnChecked = ((crTempSett & 2) == 2);
+
+                    if (crCboxIsHydOnChecked)
+                    {
+                        TimedMessageBox(2000, "Afstandsmeter", "Audio is aan");
+                        isCrDistanceAlert = false;
+                        fd.crDistanceAlerterStartDistance = fd.distanceUser;
+                    }
                 }
                 else
                 {
@@ -463,8 +474,8 @@ namespace AgOpenGPS
         }
         private void cboxAutoSnapToPivot_Click(object sender, EventArgs e)
         {
-            trk.isAutoSnapToPivot = cboxAutoSnapToPivot.Checked;
-            trackMethodPanelCounter = 1;
+            //trk.isAutoSnapToPivot = cboxAutoSnapToPivot.Checked;
+            //trackMethodPanelCounter = 1;
         }
         #endregion
 

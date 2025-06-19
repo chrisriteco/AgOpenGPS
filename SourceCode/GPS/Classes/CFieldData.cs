@@ -17,6 +17,9 @@ namespace AgOpenGPS
         //accumulated user distance
         public double distanceUser;
 
+        // CR
+        public double crDistanceAlerterStartDistance;
+
         public double barPercent = 0;
 
         public double overlapPercent = 0;

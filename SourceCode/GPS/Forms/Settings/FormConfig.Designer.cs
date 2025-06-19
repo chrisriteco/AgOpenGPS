@@ -7782,7 +7782,7 @@ namespace AgOpenGPS
             // nudHydLiftLookAhead
             // 
             this.nudHydLiftLookAhead.BackColor = System.Drawing.Color.White;
-            this.nudHydLiftLookAhead.DecimalPlaces = 1;
+            this.nudHydLiftLookAhead.DecimalPlaces = 2;
             this.nudHydLiftLookAhead.Font = new System.Drawing.Font("Tahoma", 27.75F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.nudHydLiftLookAhead.InterceptArrowKeys = false;
             this.nudHydLiftLookAhead.Location = new System.Drawing.Point(34, 278);
