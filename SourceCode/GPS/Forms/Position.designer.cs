@@ -177,7 +177,7 @@ namespace AgOpenGPS
                     if (!isCrDistanceAlert)
                     {
                         isCrDistanceAlert = true;
-                        if (sounds.isHydLiftSoundOn) sounds.sndHydLiftUp.Play();
+                        if (sounds.isHydLiftSoundOn) sounds.sndAlarmCr1.Play();
                     }
                 }
             }
