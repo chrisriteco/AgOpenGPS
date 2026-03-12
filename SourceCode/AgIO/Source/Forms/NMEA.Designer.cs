@@ -634,8 +634,10 @@ namespace AgIO
                 headingTrueDualData = headingTrueDual;
 
                 //roll
+                // CR START
                 float.TryParse(words[13], NumberStyles.Float, CultureInfo.InvariantCulture, out roll);
                 rollData = roll;
+                // CR STOP
 
                 //get latitude and convert to decimal degrees
                 int decim = words[2].IndexOf(".", StringComparison.Ordinal);

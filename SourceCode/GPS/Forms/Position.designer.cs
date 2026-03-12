@@ -892,6 +892,9 @@ namespace AgOpenGPS
                 else
                 {
                     distanceX2 = (int)(guidanceLineDistanceOff * 0.05);
+                    // CR START
+                    distanceX2 = (int)(guidanceLineDistanceOff);
+                    // CR STOP
 
                     if (distanceX2 < -127) distanceX2 = -127;
                     else if (distanceX2 > 127) distanceX2 = 127;
