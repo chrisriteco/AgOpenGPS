@@ -741,26 +741,30 @@ namespace AgOpenGPS
                 tmrWatchdog.Enabled = false;
                 fileSaveCounter = 0;
 
-                //don't save if no gps, and never persist in Easy Drive mode
-                if (isJobStarted && !isEasyDriveMode)
+                try
                 {
-                    DistanceToFieldOriginCheck();
+                    //don't save if no gps, and never persist in Easy Drive mode
+                    if (isJobStarted && !isEasyDriveMode)
+                    {
+                        DistanceToFieldOriginCheck();
 
-                    //auto save the field patches, contours accumulated so far
-                    FileSaveSections();
-                    FileSaveContour();
+                        //auto save the field patches, contours accumulated so far
+                        FileSaveSections();
+                        FileSaveContour();
 
-                    //NMEA elevation file
-                    if (isLogElevation && sbGrid.Length > 0) FileSaveElevation();
+                        //NMEA elevation file
+                        if (isLogElevation && sbGrid.Length > 0) FileSaveElevation();
 
-                    //ExportFieldAs_KML();
+                        //ExportFieldAs_KML();
+                    }
                 }
-
-                //set saving flag off
-                isSavingFile = false;
-
-                //go see if data ready for draw and position updates
-                tmrWatchdog.Enabled = true;
+                finally
+                {
+                    //set saving flag off and always restart the watchdog timer, even if a save failed.
+                    //Otherwise the timer stays off, secondsSinceStart stops and the guidance lines stop updating.
+                    isSavingFile = false;
+                    tmrWatchdog.Enabled = true;
+                }
 
                 //calc overlap
                 oglZoom.Refresh();
