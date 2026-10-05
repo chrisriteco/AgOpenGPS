@@ -741,22 +741,37 @@ namespace AgOpenGPS
                 tmrWatchdog.Enabled = false;
                 fileSaveCounter = 0;
 
+                string autoSaveStep = "";
                 try
                 {
                     //don't save if no gps, and never persist in Easy Drive mode
                     if (isJobStarted && !isEasyDriveMode)
                     {
+                        autoSaveStep = "origin check";
                         DistanceToFieldOriginCheck();
 
                         //auto save the field patches, contours accumulated so far
+                        autoSaveStep = "sections";
                         FileSaveSections();
+                        autoSaveStep = "contour";
                         FileSaveContour();
 
                         //NMEA elevation file
-                        if (isLogElevation && sbGrid.Length > 0) FileSaveElevation();
+                        if (isLogElevation && sbGrid.Length > 0)
+                        {
+                            autoSaveStep = "elevation";
+                            FileSaveElevation();
+                        }
 
                         //ExportFieldAs_KML();
                     }
+                }
+                catch (Exception ex)
+                {
+                    //log the failing step, then rethrow so the error is still shown
+                    Log.EventWriter($"Autosave failed at step '{autoSaveStep}' in '{currentFieldDirectory}': " +
+                        $"{ex.GetType().FullName} (HResult 0x{ex.HResult:X8}): {ex.Message.Replace('\r', ' ').Replace('\n', ' ')}");
+                    throw;
                 }
                 finally
                 {
