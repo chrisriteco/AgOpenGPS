@@ -114,14 +114,16 @@ namespace AgOpenGPS
         // STABLE_SECONDS:
         //   Fix moet zo lang achter elkaar binnen de hoekmarge blijven voordat
         //   de overgang begint. Bij een afwijking wordt de timer opnieuw gestart.
-        private const double AUTO_DUAL_FIX_STABLE_SECONDS = 0.30;
+        private const double AUTO_DUAL_FIX_STABLE_SECONDS = 1.00;
         // TRANSITION_SECONDS:
         //   Na de stabiliteitsperiode duurt het ongeveer deze tijd om de gebruikte
         //   fixHeading geleidelijk van Dual naar de Fix-kandidaat te verschuiven.
         private const double AUTO_DUAL_FIX_TRANSITION_SECONDS = 0.80;
-        // Tijdstip waarop de huidige aaneengesloten periode van overeenstemming
-        // begon. DateTime.MinValue betekent: er loopt momenteel geen timer.
-        private DateTime autoDualFixAlignedSinceUtc = DateTime.MinValue;
+        // Opgetelde duur (in seconden) waarin opeenvolgende geldige Fix-metingen
+        // binnen de hoekmarge van Dual blijven. Bij een afwijking wordt dit nul.
+        // We tellen alleen tijd mee wanneer dit validatieblok bij een nieuwe Fix
+        // wordt uitgevoerd; een pauze tussen updates telt dus niet onbeperkt mee.
+        private double autoDualFixAlignedSeconds = 0.0;
         // Voortgang van de overgang: 0 = volledig Dual, 1 = volledig Fix.
         // Tussenliggende waarden zijn een menging van beide koersen.
         private double autoDualFixBlend = 0.0;
@@ -217,7 +219,7 @@ namespace AgOpenGPS
                     // We zijn weer onder de snelheidsdrempel: gebruik Dual.
                     // Wis ook de eerdere stabiliteit en overgangsvoortgang. Als we
                     // later opnieuw naar Fix gaan, moet Fix zich opnieuw bewijzen.
-                    autoDualFixAlignedSinceUtc = DateTime.MinValue;
+                    autoDualFixAlignedSeconds = 0.0;
                     autoDualFixBlend = 0.0;
                 }
             }
@@ -593,35 +595,36 @@ namespace AgOpenGPS
 
                             if (fixHeadingAgreesWithDual)
                             {
-                                // Start de timer één keer wanneer Fix voor het eerst binnen de
-                                // marge valt. Zolang Fix binnen de marge blijft, loopt de timer.
-                                if (autoDualFixAlignedSinceUtc == DateTime.MinValue)
-                                    autoDualFixAlignedSinceUtc = DateTime.UtcNow;
+                                // Tel stabiliteit op basis van opeenvolgende Fix-updates, niet
+                                // op basis van de klokwandtijd. Dit validatieblok wordt alleen
+                                // bereikt wanneer de Fix-heading-berekening deze update haalt.
+                                // Beperk een grote updatepauze tot 0,5 s, zodat een hapering of
+                                // ontbrekende metingen niet als een lange stabiele periode telt.
+                                double stabilityDt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.5));
+                                autoDualFixAlignedSeconds += stabilityDt;
 
-                                // Hoe lang zijn Dual en Fix al onafgebroken dicht bij elkaar?
-                                double alignedSeconds = (DateTime.UtcNow - autoDualFixAlignedSinceUtc).TotalSeconds;
-                                if (alignedSeconds >= AUTO_DUAL_FIX_STABLE_SECONDS)
+                                if (autoDualFixAlignedSeconds >= AUTO_DUAL_FIX_STABLE_SECONDS)
                                 {
-                                    // timeSliceOfLastFix is de tijd tussen fixes. Beperk dt tot
-                                    // 0,2 s om één grote tijdsprong niet ineens een grote
-                                    // koerssprong te laten veroorzaken. Deel door de gewenste
-                                    // overgangsduur en verhoog daarmee de overgangsfactor.
-                                    double dt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.2));
-                                    autoDualFixBlend += dt / AUTO_DUAL_FIX_TRANSITION_SECONDS;
+                                    // Fix is lang genoeg bij Dual gebleven. Begin of vervolg nu
+                                    // de geleidelijke overgang. De blend-dt is apart begrensd
+                                    // zodat één grote tijdsprong geen grote koerssprong geeft.
+                                    double blendDt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.2));
+                                    autoDualFixBlend += blendDt / AUTO_DUAL_FIX_TRANSITION_SECONDS;
                                     if (autoDualFixBlend > 1.0) autoDualFixBlend = 1.0;
                                 }
                                 else
                                 {
-                                    // Fix lijkt nu goed, maar is nog niet lang genoeg stabiel:
-                                    // houd de overgang op nul totdat de stabiliteitsduur gehaald is.
+                                    // Nog geen volle seconde aan opeenvolgende overeenkomende
+                                    // Fix-updates: blijf voorlopig volledig op Dual.
                                     autoDualFixBlend = 0.0;
                                 }
                             }
                             else
                             {
-                                // Fix wijkt te veel af. Wis zowel de timer als de overgangsvoortgang.
-                                // De volgende geldige periode moet opnieuw lang genoeg stabiel zijn.
-                                autoDualFixAlignedSinceUtc = DateTime.MinValue;
+                                // Fix wijkt te veel af. Wis de opgetelde stabiliteitsduur en
+                                // overgangsvoortgang. De volgende reeks metingen moet opnieuw
+                                // een volle seconde achtereen binnen de hoekmarge blijven.
+                                autoDualFixAlignedSeconds = 0.0;
                                 autoDualFixBlend = 0.0;
                             }
 
