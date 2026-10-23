@@ -99,6 +99,33 @@ namespace AgOpenGPS
         public double fixToFixHeadingDistance = 0, gpsMinimumStepDistance = 0.05;
         private bool hasBeenFirstHeadingSet = false;
 
+        // =====================================================================
+        // AUTOMATISCHE OVERGANG VAN DUAL-HEADING NAAR FIX-TO-FIX-HEADING
+        // =====================================================================
+        // Deze instellingen bepalen hoe voorzichtig de code van Dual naar Fix
+        // overgaat. Het zijn voorlopige startwaarden; ze zijn nog niet in het
+        // veld gevalideerd en worden niet vanuit de gebruikersinterface ingesteld.
+        //
+        // TOLERANCE_DEG:
+        //   Fix moet binnen dit aantal graden van Dual liggen om als kandidaat
+        //   te worden geaccepteerd. We vergelijken het kleinste hoekverschil,
+        //   dus 359 graden en 1 graad verschillen slechts 2 graden.
+        private const double AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG = 20.0;
+        // STABLE_SECONDS:
+        //   Fix moet zo lang achter elkaar binnen de hoekmarge blijven voordat
+        //   de overgang begint. Bij een afwijking wordt de timer opnieuw gestart.
+        private const double AUTO_DUAL_FIX_STABLE_SECONDS = 0.30;
+        // TRANSITION_SECONDS:
+        //   Na de stabiliteitsperiode duurt het ongeveer deze tijd om de gebruikte
+        //   fixHeading geleidelijk van Dual naar de Fix-kandidaat te verschuiven.
+        private const double AUTO_DUAL_FIX_TRANSITION_SECONDS = 0.80;
+        // Tijdstip waarop de huidige aaneengesloten periode van overeenstemming
+        // begon. DateTime.MinValue betekent: er loopt momenteel geen timer.
+        private DateTime autoDualFixAlignedSinceUtc = DateTime.MinValue;
+        // Voortgang van de overgang: 0 = volledig Dual, 1 = volledig Fix.
+        // Tussenliggende waarden zijn een menging van beide koersen.
+        private double autoDualFixBlend = 0.0;
+
         public bool isChangingDirection, isReverseWithIMU;
 
         private double nowHz = 0, filteredDelta = 0, delta = 0;
@@ -186,6 +213,12 @@ namespace AgOpenGPS
                     headingFromSource = "Dual";
                     ahrs.isDualAsIMU = false;
                     ahrs.imuHeading = 99999;
+
+                    // We zijn weer onder de snelheidsdrempel: gebruik Dual.
+                    // Wis ook de eerdere stabiliteit en overgangsvoortgang. Als we
+                    // later opnieuw naar Fix gaan, moet Fix zich opnieuw bewijzen.
+                    autoDualFixAlignedSinceUtc = DateTime.MinValue;
+                    autoDualFixBlend = 0.0;
                 }
             }
 
@@ -529,6 +562,86 @@ namespace AgOpenGPS
                         stepFixPts[0].isSet = 1;
 
                         #endregion
+
+                        // =================================================================
+                        // AUTO DUAL-FIX: VALIDEREN EN GELEIDELIJK OVERGAAN
+                        // =================================================================
+                        // Dit blok draait alleen voor de automatische modus waarbij Dual
+                        // als voorkeursbron is ingesteld. De snelheidslogica hierboven heeft
+                        // de bron op "Fix" gezet; hier controleren we of de Fix-koers al
+                        // genoeg overeenkomt met Dual voordat we die koers laten overnemen.
+                        if (Properties.VehicleSettings.Default.setGPS_headingFromWhichSource == "Dual"
+                            && ahrs.autoSwitchDualFixOn)
+                        {
+                            // Dual-heading komt in graden binnen; de rest van deze berekening
+                            // werkt met radialen. Normaliseer naar het bereik 0 .. 2*pi.
+                            double dualHeading = glm.toRadians(pn.headingTrueDual);
+                            if (dualHeading < 0) dualHeading += glm.twoPI;
+                            else if (dualHeading >= glm.twoPI) dualHeading -= glm.twoPI;
+
+                            // gpsHeading is hier de ruwe Fix-to-Fix-kandidaat. Het gewone
+                            // aftrekken van hoeken werkt niet goed bij de grens 0/360 graden.
+                            // Atan2(sin, cos) geeft het kleinste getekende hoekverschil; Abs
+                            // maakt daarvan de grootte van het verschil.
+                            double headingDifference = Math.Abs(Math.Atan2(
+                                Math.Sin(gpsHeading - dualHeading),
+                                Math.Cos(gpsHeading - dualHeading)));
+                            double headingDifferenceDegrees = glm.toDegrees(headingDifference);
+
+                            // Fix is alleen 'uitgelijnd' als het verschil binnen de marge valt.
+                            bool fixHeadingAgreesWithDual = headingDifferenceDegrees <= AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG;
+
+                            if (fixHeadingAgreesWithDual)
+                            {
+                                // Start de timer één keer wanneer Fix voor het eerst binnen de
+                                // marge valt. Zolang Fix binnen de marge blijft, loopt de timer.
+                                if (autoDualFixAlignedSinceUtc == DateTime.MinValue)
+                                    autoDualFixAlignedSinceUtc = DateTime.UtcNow;
+
+                                // Hoe lang zijn Dual en Fix al onafgebroken dicht bij elkaar?
+                                double alignedSeconds = (DateTime.UtcNow - autoDualFixAlignedSinceUtc).TotalSeconds;
+                                if (alignedSeconds >= AUTO_DUAL_FIX_STABLE_SECONDS)
+                                {
+                                    // timeSliceOfLastFix is de tijd tussen fixes. Beperk dt tot
+                                    // 0,2 s om één grote tijdsprong niet ineens een grote
+                                    // koerssprong te laten veroorzaken. Deel door de gewenste
+                                    // overgangsduur en verhoog daarmee de overgangsfactor.
+                                    double dt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.2));
+                                    autoDualFixBlend += dt / AUTO_DUAL_FIX_TRANSITION_SECONDS;
+                                    if (autoDualFixBlend > 1.0) autoDualFixBlend = 1.0;
+                                }
+                                else
+                                {
+                                    // Fix lijkt nu goed, maar is nog niet lang genoeg stabiel:
+                                    // houd de overgang op nul totdat de stabiliteitsduur gehaald is.
+                                    autoDualFixBlend = 0.0;
+                                }
+                            }
+                            else
+                            {
+                                // Fix wijkt te veel af. Wis zowel de timer als de overgangsvoortgang.
+                                // De volgende geldige periode moet opnieuw lang genoeg stabiel zijn.
+                                autoDualFixAlignedSinceUtc = DateTime.MinValue;
+                                autoDualFixBlend = 0.0;
+                            }
+
+                            // Bewaar de koers die vóór deze controle in fixHeading stond.
+                            // Dit is de effectieve Fix-koers, inclusief de bestaande eventuele
+                            // IMU-verwerking. De ruwe gpsHeading wordt door dit blok niet aangepast.
+                            double fixCandidateHeading = fixHeading;
+                            if (!fixHeadingAgreesWithDual || autoDualFixBlend <= 0.0)
+                            {
+                                // Fix is nog niet geldig/stabiel genoeg: gebruik voor fixHeading
+                                // voorlopig Dual, zodat die koers naar de volgende berekeningen gaat.
+                                fixHeading = dualHeading;
+                            }
+                            else
+                            {
+                                // Geleidelijke overgang: blend 0 betekent Dual, 1 betekent Fix.
+                                // InterpolateHeading volgt de kortste hoekrichting, ook over 0/360.
+                                fixHeading = InterpolateHeading(dualHeading, fixCandidateHeading, autoDualFixBlend);
+                            }
+                        }
 
                         #region Camera
 
@@ -1156,6 +1269,28 @@ namespace AgOpenGPS
 
             if (frameTimeRough > 80) frameTimeRough = 80;
             frameTime = frameTime * 0.90 + frameTimeRough * 0.1;
+        }
+
+        // Mengt twee koersen zonder een grote sprong over de 0/360-grens.
+        // fromHeading = beginrichting (hier Dual); toHeading = eindrichting (hier Fix).
+        // amount is de voortgang: 0.0 geeft volledig fromHeading, 1.0 volledig toHeading.
+        // De berekening kiest altijd de kortste weg rond de cirkel. Voorbeeld: van 359 naar
+        // 1 graad gaat de interpolatie via 0 graden, niet bijna een hele cirkel terug.
+        private double InterpolateHeading(double fromHeading, double toHeading, double amount)
+        {
+            // Beveiliging: de voortgang mag nooit kleiner dan 0 of groter dan 1 zijn.
+            amount = Math.Max(0.0, Math.Min(1.0, amount));
+
+            // Kleinste hoekverschil tussen de twee koersen, met teken (links/rechts).
+            double difference = Math.Atan2(Math.Sin(toHeading - fromHeading), Math.Cos(toHeading - fromHeading));
+
+            // Neem het opgegeven deel van dat verschil vanaf de beginrichting.
+            double heading = fromHeading + (difference * amount);
+
+            // Normaliseer de uitkomst naar het gebruikelijke bereik 0 .. 2*pi radialen.
+            if (heading < 0) heading += glm.twoPI;
+            else if (heading >= glm.twoPI) heading -= glm.twoPI;
+            return heading;
         }
 
         private void TheRest()
