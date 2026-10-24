@@ -110,7 +110,7 @@ namespace AgOpenGPS
         //   Fix moet binnen dit aantal graden van Dual liggen om als kandidaat
         //   te worden geaccepteerd. We vergelijken het kleinste hoekverschil,
         //   dus 359 graden en 1 graad verschillen slechts 2 graden.
-        private const double AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG = 20.0;
+        private const double AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG = 10.0;
         // STABLE_SECONDS:
         //   Fix moet zo lang achter elkaar binnen de hoekmarge blijven voordat
         //   de overgang begint. Bij een afwijking wordt de timer opnieuw gestart.
@@ -224,6 +224,13 @@ namespace AgOpenGPS
                 }
             }
 
+            // Deze vlaggen gelden alleen voor deze GPS-update. In de automatische
+            // Dual->Fix-modus blijven we op Dual terugvallen zolang de Fix-kandidaat
+            // nog niet gevalideerd is of deze update geen bruikbare heading oplevert.
+            bool autoDualFixMode = Properties.VehicleSettings.Default.setGPS_headingFromWhichSource == "Dual"
+                && ahrs.autoSwitchDualFixOn;
+            bool autoDualFixUseDualFallback = autoDualFixMode && headingFromSource == "Fix";
+
             #region Heading
             switch (headingFromSource)
             {
@@ -242,7 +249,17 @@ namespace AgOpenGPS
                         prevDistFix = pn.fix;
 
                         if (Math.Abs(avgSpeed) < 1.5 && !isFirstHeadingSet)
+                        {
+                            // Zonder vastgestelde rijrichting is nog geen betrouwbare Fix-heading
+                            // beschikbaar; begin de stabiliteitscontrole later opnieuw.
+                            if (autoDualFixMode)
+                            {
+                                autoDualFixAlignedSeconds = 0.0;
+                                autoDualFixBlend = 0.0;
+                                autoDualFixUseDualFallback = true;
+                            }
                             goto byPass;
+                        }
 
                         if (!isFirstHeadingSet) //set in steer settings, Stanley
                         {
@@ -393,6 +410,14 @@ namespace AgOpenGPS
 
                         if (distanceCurrentStepFix < gpsMinimumStepDistance)
                         {
+                            // Er is nog geen bruikbare verplaatsing om een Fix-heading te bepalen.
+                            // Deze update mag dus niet meetellen als bewijs van stabiliteit.
+                            if (autoDualFixMode)
+                            {
+                                autoDualFixAlignedSeconds = 0.0;
+                                autoDualFixBlend = 0.0;
+                                autoDualFixUseDualFallback = true;
+                            }
                             goto byPass;
                         }
                         
@@ -413,7 +438,16 @@ namespace AgOpenGPS
                         }
 
                         if (fixToFixHeadingDistance < minFixHeadingDistSquared * 0.5)
+                        {
+                            // De afgelegde afstand is nog te klein voor een betrouwbare koers.
+                            if (autoDualFixMode)
+                            {
+                                autoDualFixAlignedSeconds = 0.0;
+                                autoDualFixBlend = 0.0;
+                                autoDualFixUseDualFallback = true;
+                            }
                             goto byPass;
+                        }
 
                         double newGPSHeading = Math.Atan2(pn.fix.easting - stepFixPts[currentStepFix].easting,
                                                 pn.fix.northing - stepFixPts[currentStepFix].northing);
@@ -459,51 +493,69 @@ namespace AgOpenGPS
                             if (newGPSHeading < 0) newGPSHeading += glm.twoPI;
                             else if (newGPSHeading >= glm.twoPI) newGPSHeading -= glm.twoPI;
 
-                            gpsHeading = newGPSHeading;
+                            // Valideer de gecorrigeerde Fix-kandidaat VOORDAT deze de IMU-offset
+                            // kan aanpassen. Een onbetrouwbare kandidaat mag de IMU-fusie niet vervuilen.
+                            if (autoDualFixMode)
+                                autoDualFixUseDualFallback = !ValidateAutoDualFixCandidate(newGPSHeading);
 
-                            #region IMU Fusion
-
-                            // IMU Fusion with heading correction, add the correction
-                            //current gyro angle in radians
-                            double imuHeading = (glm.toRadians(ahrs.imuHeading));
-
-                            //Difference between the IMU heading and the GPS heading
-                            double gyroDelta = 0;
-
-                            //if (!isReverseWithIMU)
-                            gyroDelta = (imuHeading + imuGPS_Offset) - gpsHeading;
-
-                            if (gyroDelta < 0) gyroDelta += glm.twoPI;
-                            else if (gyroDelta >= glm.twoPI) gyroDelta -= glm.twoPI;
-
-                            //calculate delta based on circular data problem 0 to 360 to 0, clamp to +- 2 Pi
-                            if (gyroDelta >= -glm.PIBy2 && gyroDelta <= glm.PIBy2) gyroDelta *= -1.0;
-                            else
+                            if (!autoDualFixUseDualFallback)
                             {
-                                if (gyroDelta > glm.PIBy2) { gyroDelta = glm.twoPI - gyroDelta; }
-                                else { gyroDelta = (glm.twoPI + gyroDelta) * -1.0; }
-                            }
-                            if (gyroDelta > glm.twoPI) gyroDelta -= glm.twoPI;
-                            else if (gyroDelta < -glm.twoPI) gyroDelta += glm.twoPI;
+                                gpsHeading = newGPSHeading;
 
-                            //moe the offset to line up imu with gps
-                            if (!isReverseWithIMU)
-                                imuGPS_Offset += (gyroDelta * (ahrs.fusionWeight));
-                            else
-                                imuGPS_Offset += (gyroDelta * (0.02));
+                                #region IMU Fusion
 
-                            if (imuGPS_Offset > glm.twoPI) imuGPS_Offset -= glm.twoPI;
-                            else if (imuGPS_Offset < 0) imuGPS_Offset += glm.twoPI;
+                                // IMU Fusion with heading correction, add the correction
+                                //current gyro angle in radians
+                                double imuHeading = (glm.toRadians(ahrs.imuHeading));
 
-                            //determine the Corrected heading based on gyro and GPS
-                            imuCorrected = imuHeading + imuGPS_Offset;
-                            if (imuCorrected >= glm.twoPI) imuCorrected -= glm.twoPI;
-                            else if (imuCorrected < 0) imuCorrected += glm.twoPI;
+                                //Difference between the IMU heading and the GPS heading
+                                double gyroDelta = 0;
 
-                            //use imu as heading when going slow
-                            fixHeading = imuCorrected;
+                                //if (!isReverseWithIMU)
+                                gyroDelta = (imuHeading + imuGPS_Offset) - gpsHeading;
+
+                                if (gyroDelta < 0) gyroDelta += glm.twoPI;
+                                else if (gyroDelta >= glm.twoPI) gyroDelta -= glm.twoPI;
+
+                                //calculate delta based on circular data problem 0 to 360 to 0, clamp to +- 2 Pi
+                                if (gyroDelta >= -glm.PIBy2 && gyroDelta <= glm.PIBy2) gyroDelta *= -1.0;
+                                else
+                                {
+                                    if (gyroDelta > glm.PIBy2) { gyroDelta = glm.twoPI - gyroDelta; }
+                                    else { gyroDelta = (glm.twoPI + gyroDelta) * -1.0; }
+                                }
+                                if (gyroDelta > glm.twoPI) gyroDelta -= glm.twoPI;
+                                else if (gyroDelta < -glm.twoPI) gyroDelta += glm.twoPI;
+
+                                //moe the offset to line up imu with gps
+                                if (!isReverseWithIMU)
+                                    imuGPS_Offset += (gyroDelta * (ahrs.fusionWeight));
+                                else
+                                    imuGPS_Offset += (gyroDelta * (0.02));
+
+                                if (imuGPS_Offset > glm.twoPI) imuGPS_Offset -= glm.twoPI;
+                                else if (imuGPS_Offset < 0) imuGPS_Offset += glm.twoPI;
+
+                                //determine the Corrected heading based on gyro and GPS
+                                imuCorrected = imuHeading + imuGPS_Offset;
+                                if (imuCorrected >= glm.twoPI) imuCorrected -= glm.twoPI;
+                                else if (imuCorrected < 0) imuCorrected += glm.twoPI;
+
+                                //use imu as heading when going slow
+                                fixHeading = imuCorrected;
 
                             #endregion
+                            }
+                            else
+                            {
+                                // Kandidaat nog niet betrouwbaar: houd Dual aan en laat de IMU-offset
+                                // ongemoeid. De ruwe Fix-koers wordt niet als geaccepteerd opgeslagen.
+                                double dualFallbackHeading = glm.toRadians(pn.headingTrueDual);
+                                if (dualFallbackHeading < 0) dualFallbackHeading += glm.twoPI;
+                                else if (dualFallbackHeading >= glm.twoPI) dualFallbackHeading -= glm.twoPI;
+                                gpsHeading = dualFallbackHeading;
+                                fixHeading = dualFallbackHeading;
+                            }
                         }
                         else
                         {
@@ -526,7 +578,15 @@ namespace AgOpenGPS
 
                                 //we can't be sure if changing direction so do nothing
                                 if (isChangingDirection)
+                                {
+                                    if (autoDualFixMode)
+                                    {
+                                        autoDualFixAlignedSeconds = 0.0;
+                                        autoDualFixBlend = 0.0;
+                                        autoDualFixUseDualFallback = true;
+                                    }
                                     goto byPass;
+                                }
 
                                 //ie change in direction
                                 if (filteredDelta > 1.57) //
@@ -553,98 +613,58 @@ namespace AgOpenGPS
                                 isChangingDirection = false;
                             }
 
-                            //set the headings
-                            fixHeading = gpsHeading = newGPSHeading;
+                            // Zonder IMU is newGPSHeading zelf de koerskandidaat. Valideer hem
+                            // voordat we hem als heading of als nieuwe positiegeschiedenis opslaan.
+                            if (autoDualFixMode)
+                                autoDualFixUseDualFallback = !ValidateAutoDualFixCandidate(newGPSHeading);
+
+                            if (!autoDualFixUseDualFallback)
+                            {
+                                fixHeading = gpsHeading = newGPSHeading;
+                            }
+                            else
+                            {
+                                double dualFallbackHeading = glm.toRadians(pn.headingTrueDual);
+                                if (dualFallbackHeading < 0) dualFallbackHeading += glm.twoPI;
+                                else if (dualFallbackHeading >= glm.twoPI) dualFallbackHeading -= glm.twoPI;
+                                fixHeading = gpsHeading = dualFallbackHeading;
+                            }
                         }
 
-                        //save current fix and set as valid
-                        for (int i = totalFixSteps - 1; i > 0; i--) stepFixPts[i] = stepFixPts[i - 1];
-                        stepFixPts[0].easting = pn.fix.easting;
-                        stepFixPts[0].northing = pn.fix.northing;
-                        stepFixPts[0].isSet = 1;
-
-                        #endregion
-
-                        // =================================================================
-                        // AUTO DUAL-FIX: VALIDEREN EN GELEIDELIJK OVERGAAN
-                        // =================================================================
-                        // Dit blok draait alleen voor de automatische modus waarbij Dual
-                        // als voorkeursbron is ingesteld. De snelheidslogica hierboven heeft
-                        // de bron op "Fix" gezet; hier controleren we of de Fix-koers al
-                        // genoeg overeenkomt met Dual voordat we die koers laten overnemen.
-                        if (Properties.VehicleSettings.Default.setGPS_headingFromWhichSource == "Dual"
-                            && ahrs.autoSwitchDualFixOn)
+                        // Sla de positie pas op in de Fix-to-Fix-geschiedenis als de kandidaat
+                        // is geaccepteerd. Een afwijkende fix mag volgende koersberekeningen
+                        // niet vervuilen. In de gewone (niet-automatische) Fix-modus blijft het
+                        // oorspronkelijke gedrag behouden.
+                        if (!autoDualFixUseDualFallback)
                         {
-                            // Dual-heading komt in graden binnen; de rest van deze berekening
-                            // werkt met radialen. Normaliseer naar het bereik 0 .. 2*pi.
+                            for (int i = totalFixSteps - 1; i > 0; i--) stepFixPts[i] = stepFixPts[i - 1];
+                            stepFixPts[0].easting = pn.fix.easting;
+                            stepFixPts[0].northing = pn.fix.northing;
+                            stepFixPts[0].isSet = 1;
+                        }
+
+                        // Pas na de IMU-fusie de geleidelijke overgang toe. Zo wordt de ruwe
+                        // Fix-kandidaat nog gebruikt voor de interne fusieberekening, maar krijgen
+                        // de besturing en het externe koersbericht de geaccepteerde heading.
+                        if (autoDualFixMode)
+                        {
                             double dualHeading = glm.toRadians(pn.headingTrueDual);
                             if (dualHeading < 0) dualHeading += glm.twoPI;
                             else if (dualHeading >= glm.twoPI) dualHeading -= glm.twoPI;
 
-                            // gpsHeading is hier de ruwe Fix-to-Fix-kandidaat. Het gewone
-                            // aftrekken van hoeken werkt niet goed bij de grens 0/360 graden.
-                            // Atan2(sin, cos) geeft het kleinste getekende hoekverschil; Abs
-                            // maakt daarvan de grootte van het verschil.
-                            double headingDifference = Math.Abs(Math.Atan2(
-                                Math.Sin(gpsHeading - dualHeading),
-                                Math.Cos(gpsHeading - dualHeading)));
-                            double headingDifferenceDegrees = glm.toDegrees(headingDifference);
-
-                            // Fix is alleen 'uitgelijnd' als het verschil binnen de marge valt.
-                            bool fixHeadingAgreesWithDual = headingDifferenceDegrees <= AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG;
-
-                            if (fixHeadingAgreesWithDual)
+                            if (autoDualFixUseDualFallback)
                             {
-                                // Tel stabiliteit op basis van opeenvolgende Fix-updates, niet
-                                // op basis van de klokwandtijd. Dit validatieblok wordt alleen
-                                // bereikt wanneer de Fix-heading-berekening deze update haalt.
-                                // Beperk een grote updatepauze tot 0,5 s, zodat een hapering of
-                                // ontbrekende metingen niet als een lange stabiele periode telt.
-                                double stabilityDt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.5));
-                                autoDualFixAlignedSeconds += stabilityDt;
-
-                                if (autoDualFixAlignedSeconds >= AUTO_DUAL_FIX_STABLE_SECONDS)
-                                {
-                                    // Fix is lang genoeg bij Dual gebleven. Begin of vervolg nu
-                                    // de geleidelijke overgang. De blend-dt is apart begrensd
-                                    // zodat één grote tijdsprong geen grote koerssprong geeft.
-                                    double blendDt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.2));
-                                    autoDualFixBlend += blendDt / AUTO_DUAL_FIX_TRANSITION_SECONDS;
-                                    if (autoDualFixBlend > 1.0) autoDualFixBlend = 1.0;
-                                }
-                                else
-                                {
-                                    // Nog geen volle seconde aan opeenvolgende overeenkomende
-                                    // Fix-updates: blijf voorlopig volledig op Dual.
-                                    autoDualFixBlend = 0.0;
-                                }
-                            }
-                            else
-                            {
-                                // Fix wijkt te veel af. Wis de opgetelde stabiliteitsduur en
-                                // overgangsvoortgang. De volgende reeks metingen moet opnieuw
-                                // een volle seconde achtereen binnen de hoekmarge blijven.
-                                autoDualFixAlignedSeconds = 0.0;
-                                autoDualFixBlend = 0.0;
-                            }
-
-                            // Bewaar de koers die vóór deze controle in fixHeading stond.
-                            // Dit is de effectieve Fix-koers, inclusief de bestaande eventuele
-                            // IMU-verwerking. De ruwe gpsHeading wordt door dit blok niet aangepast.
-                            double fixCandidateHeading = fixHeading;
-                            if (!fixHeadingAgreesWithDual || autoDualFixBlend <= 0.0)
-                            {
-                                // Fix is nog niet geldig/stabiel genoeg: gebruik voor fixHeading
-                                // voorlopig Dual, zodat die koers naar de volgende berekeningen gaat.
                                 fixHeading = dualHeading;
+                                gpsHeading = dualHeading;
                             }
                             else
                             {
-                                // Geleidelijke overgang: blend 0 betekent Dual, 1 betekent Fix.
-                                // InterpolateHeading volgt de kortste hoekrichting, ook over 0/360.
-                                fixHeading = InterpolateHeading(dualHeading, fixCandidateHeading, autoDualFixBlend);
+                                fixHeading = InterpolateHeading(dualHeading, fixHeading, autoDualFixBlend);
+                                gpsHeading = fixHeading;
                             }
                         }
+
+                        #endregion
 
                         #region Camera
 
@@ -674,7 +694,10 @@ namespace AgOpenGPS
 
                     //Calculate a million other things
                     byPass:
-                        if (ahrs.imuHeading != 99999)
+                        // In de automatische Dual->Fix-modus mag de algemene bypass-code de
+                        // gevalideerde/blended heading niet alsnog door IMU vervangen. Bij een
+                        // ontbrekende of afgekeurde Fix-kandidaat blijft Dual de terugvalbron.
+                        if (!autoDualFixMode && ahrs.imuHeading != 99999)
                         {
                             imuCorrected = (glm.toRadians(ahrs.imuHeading)) + imuGPS_Offset;
                             if (imuCorrected >= glm.twoPI) imuCorrected -= glm.twoPI;
@@ -682,6 +705,14 @@ namespace AgOpenGPS
 
                             //use imu as heading when going slow
                             fixHeading = imuCorrected;
+                        }
+                        else if (autoDualFixMode && autoDualFixUseDualFallback)
+                        {
+                            double dualFallbackHeading = glm.toRadians(pn.headingTrueDual);
+                            if (dualFallbackHeading < 0) dualFallbackHeading += glm.twoPI;
+                            else if (dualFallbackHeading >= glm.twoPI) dualFallbackHeading -= glm.twoPI;
+                            fixHeading = dualFallbackHeading;
+                            gpsHeading = dualFallbackHeading;
                         }
 
                         camDelta = fixHeading - smoothCamHeading;
@@ -1275,6 +1306,45 @@ namespace AgOpenGPS
 
             if (frameTimeRough > 80) frameTimeRough = 80;
             frameTime = frameTime * 0.90 + frameTimeRough * 0.1;
+        }
+
+        // Controleert een Fix-to-Fix-kandidaat vóór IMU-fusie en vóór opslag in stepFixPts.
+        // Return true betekent: de kandidaat heeft één seconde aan opeenvolgende geldige
+        // updates binnen de hoekmarge doorstaan en mag worden gebruikt. De overgangsfactor
+        // wordt alleen verhoogd wanneer deze controle slaagt.
+        private bool ValidateAutoDualFixCandidate(double candidateHeading)
+        {
+            double dualHeading = glm.toRadians(pn.headingTrueDual);
+            if (dualHeading < 0) dualHeading += glm.twoPI;
+            else if (dualHeading >= glm.twoPI) dualHeading -= glm.twoPI;
+
+            double headingDifference = Math.Abs(Math.Atan2(
+                Math.Sin(candidateHeading - dualHeading),
+                Math.Cos(candidateHeading - dualHeading)));
+
+            if (glm.toDegrees(headingDifference) > AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG)
+            {
+                autoDualFixAlignedSeconds = 0.0;
+                autoDualFixBlend = 0.0;
+                return false;
+            }
+
+            // Alleen bruikbare Fix-updates komen hier. Begrens dt zodat een updatepauze
+            // niet als een lange periode van stabiliteit wordt gezien.
+            double stabilityDt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.5));
+            autoDualFixAlignedSeconds += stabilityDt;
+
+            if (autoDualFixAlignedSeconds < AUTO_DUAL_FIX_STABLE_SECONDS)
+            {
+                autoDualFixBlend = 0.0;
+                return false;
+            }
+
+            // Na validatie loopt de overgang geleidelijk op naar volledig Fix.
+            double blendDt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.2));
+            autoDualFixBlend += blendDt / AUTO_DUAL_FIX_TRANSITION_SECONDS;
+            if (autoDualFixBlend > 1.0) autoDualFixBlend = 1.0;
+            return true;
         }
 
         // Mengt twee koersen zonder een grote sprong over de 0/360-grens.
