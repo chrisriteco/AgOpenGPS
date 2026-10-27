@@ -6,8 +6,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
-using System.Drawing;
-using System.Windows.Forms;
 
 namespace AgOpenGPS
 {
@@ -101,24 +99,6 @@ namespace AgOpenGPS
         public double fixToFixHeadingDistance = 0, gpsMinimumStepDistance = 0.05;
         private bool hasBeenFirstHeadingSet = false;
 
-        // Auto Dual-Fix validation: Fix must agree with Dual for one second before use.
-        private const double AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG = 3.0;
-        private const double AUTO_DUAL_FIX_STABLE_SECONDS = 1.0;
-        // Testmodus: na validatie direct schakelen tussen Dual en Fix, zonder blend.
-        private double autoDualFixAlignedSeconds = 0.0;
-        // Status voor zichtbare feedback: meld alleen statuswijzigingen, niet elke GPS-update.
-        private bool autoDualFixUiAttemptShown = false;
-        private bool autoDualFixUiAccepted = false;
-
-        // Vast, niet-mod aal diagnosevenster voor Auto Dual-Fix-testen.
-        private Form autoDualFixDiagnosticForm;
-        private Label autoDualFixDiagnosticLabel;
-        private double autoDualFixDiagnosticDualDeg = double.NaN;
-        private double autoDualFixDiagnosticFixDeg = double.NaN;
-        private double autoDualFixDiagnosticDifferenceDeg = double.NaN;
-        private string autoDualFixDiagnosticReason = "Wachten op Fix-kandidaat";
-        private bool autoDualFixDiagnosticUserClosed = false;
-
         public bool isChangingDirection, isReverseWithIMU;
 
         private double nowHz = 0, filteredDelta = 0, delta = 0;
@@ -194,38 +174,18 @@ namespace AgOpenGPS
             pn.speed = pn.vtgSpeed;
             pn.AverageTheSpeed();
 
-            bool autoDualFixMode = Properties.VehicleSettings.Default.setGPS_headingFromWhichSource == "Dual"
-                && ahrs.autoSwitchDualFixOn;
-            // Per update bepalen we uitsluitend welke bron actief mag zijn: Dual of Fix.
-            // Fix wordt alleen actief na een geldige headingvergelijking.
-            bool autoDualFixUseDualHeading = false;
-
-            if (autoDualFixMode)
+            if (Properties.VehicleSettings.Default.setGPS_headingFromWhichSource == "Dual" && ahrs.autoSwitchDualFixOn)
             {
                 if (Math.Abs(pn.speed) > ahrs.autoSwitchDualFixSpeed)
                 {
                     headingFromSource = "Fix";
                     ahrs.isDualAsIMU = true;
-
-                    // Zichtbare melding zodra de snelheid hoog genoeg is, ook als er nog
-                    // onvoldoende verplaatsing is om überhaupt een Fix-heading te berekenen.
-                    if (!autoDualFixUiAttemptShown)
-                    {
-                        autoDualFixUiAttemptShown = true;
-                        Log.EventWriter("Auto Dual-Fix: wacht op geldige Fix-metingen; Dual blijft actief totdat Fix is geaccepteerd.");
-                    }
                 }
                 else
                 {
                     headingFromSource = "Dual";
                     ahrs.isDualAsIMU = false;
                     ahrs.imuHeading = 99999;
-
-                    // Bij terugschakelen naar Dual moet de volgende Fix-kandidaat
-                    // opnieuw een volledige seconde worden gevalideerd.
-                    autoDualFixAlignedSeconds = 0.0;
-                    autoDualFixUiAttemptShown = false;
-                    autoDualFixUiAccepted = false;
                 }
             }
 
@@ -237,20 +197,17 @@ namespace AgOpenGPS
                     {
                         #region Start
 
+                        if (Properties.VehicleSettings.Default.setGPS_headingFromWhichSource == "Dual" && ahrs.autoSwitchDualFixOn)
+                        {
+                            lblSpeed.ForeColor = System.Drawing.Color.Red;
+                        }
+
                         distanceCurrentStepFixDisplay = glm.Distance(prevDistFix, pn.fix);
                         distanceCurrentStepFixDisplay *= 100;
                         prevDistFix = pn.fix;
 
                         if (Math.Abs(avgSpeed) < 1.5 && !isFirstHeadingSet)
-                        {
-                            // Tijdens de eerste initialisatie is nog geen Fix-heading valideerbaar.
-                            if (autoDualFixMode)
-                            {
-                                autoDualFixAlignedSeconds = 0.0;
-                                autoDualFixUseDualHeading = true;
-                            }
                             goto byPass;
-                        }
 
                         if (!isFirstHeadingSet) //set in steer settings, Stanley
                         {
@@ -401,13 +358,6 @@ namespace AgOpenGPS
 
                         if (distanceCurrentStepFix < gpsMinimumStepDistance)
                         {
-                            // Zonder voldoende positieverandering is geen nieuwe Fix-heading
-                            // te valideren. Blijf in de automatische modus op Dual.
-                            if (autoDualFixMode)
-                            {
-                                autoDualFixAlignedSeconds = 0.0;
-                                autoDualFixUseDualHeading = true;
-                            }
                             goto byPass;
                         }
                         
@@ -428,15 +378,7 @@ namespace AgOpenGPS
                         }
 
                         if (fixToFixHeadingDistance < minFixHeadingDistSquared * 0.5)
-                        {
-                            // Er is nog onvoldoende afstand voor een bruikbare koersmeting.
-                            if (autoDualFixMode)
-                            {
-                                autoDualFixAlignedSeconds = 0.0;
-                                autoDualFixUseDualHeading = true;
-                            }
                             goto byPass;
-                        }
 
                         double newGPSHeading = Math.Atan2(pn.fix.easting - stepFixPts[currentStepFix].easting,
                                                 pn.fix.northing - stepFixPts[currentStepFix].northing);
@@ -481,14 +423,6 @@ namespace AgOpenGPS
 
                             if (newGPSHeading < 0) newGPSHeading += glm.twoPI;
                             else if (newGPSHeading >= glm.twoPI) newGPSHeading -= glm.twoPI;
-
-                            // Valideer vóór gpsHeading en IMU-offset worden aangepast.
-                            // Bij afwijzing slaat byPass de kandidaat over en gebruikt Dual.
-                            if (autoDualFixMode && !ValidateAutoDualFixCandidate(newGPSHeading))
-                            {
-                                autoDualFixUseDualHeading = true;
-                                goto byPass;
-                            }
 
                             gpsHeading = newGPSHeading;
 
@@ -557,14 +491,7 @@ namespace AgOpenGPS
 
                                 //we can't be sure if changing direction so do nothing
                                 if (isChangingDirection)
-                                {
-                                    if (autoDualFixMode)
-                                    {
-                                        autoDualFixAlignedSeconds = 0.0;
-                                        autoDualFixUseDualHeading = true;
-                                    }
                                     goto byPass;
-                                }
 
                                 //ie change in direction
                                 if (filteredDelta > 1.57) //
@@ -591,14 +518,7 @@ namespace AgOpenGPS
                                 isChangingDirection = false;
                             }
 
-                            // Zonder IMU moet de Fix-kandidaat ook eerst worden gevalideerd.
-                            if (autoDualFixMode && !ValidateAutoDualFixCandidate(newGPSHeading))
-                            {
-                                autoDualFixUseDualHeading = true;
-                                goto byPass;
-                            }
-
-                            //set the headings (ongewijzigde oorspronkelijke toewijzing)
+                            //set the headings
                             fixHeading = gpsHeading = newGPSHeading;
                         }
 
@@ -638,13 +558,7 @@ namespace AgOpenGPS
 
                     //Calculate a million other things
                     byPass:
-                        if (autoDualFixUseDualHeading)
-                        {
-                            fixHeading = glm.toRadians(pn.headingTrueDual);
-                            if (fixHeading < 0) fixHeading += glm.twoPI;
-                            else if (fixHeading >= glm.twoPI) fixHeading -= glm.twoPI;
-                        }
-                        else if (ahrs.imuHeading != 99999)
+                        if (ahrs.imuHeading != 99999)
                         {
                             imuCorrected = (glm.toRadians(ahrs.imuHeading)) + imuGPS_Offset;
                             if (imuCorrected >= glm.twoPI) imuCorrected -= glm.twoPI;
@@ -653,17 +567,6 @@ namespace AgOpenGPS
                             //use imu as heading when going slow
                             fixHeading = imuCorrected;
                         }
-
-                        // Testmodus zonder overgang: direct de actieve bron tonen.
-                        // Groen = Dual-heading; rood = geaccepteerde Fix-heading.
-                        // De berekende Fix-heading wordt niet meer tussen Dual en Fix gemengd.
-                        if (autoDualFixMode)
-                        {
-                            lblSpeed.ForeColor = autoDualFixUseDualHeading
-                                ? System.Drawing.Color.Green
-                                : System.Drawing.Color.Red;
-                        }
-                        UpdateAutoDualFixDiagnostic(autoDualFixMode, autoDualFixUseDualHeading);
 
                         camDelta = fixHeading - smoothCamHeading;
 
@@ -788,13 +691,8 @@ namespace AgOpenGPS
                     {
                         if (Properties.VehicleSettings.Default.setGPS_headingFromWhichSource == "Dual" && ahrs.autoSwitchDualFixOn)
                         {
-                            // In de Dual-case wordt daadwerkelijk Dual-heading gebruikt.
                             lblSpeed.ForeColor = System.Drawing.Color.Green;
                             isChangingDirection = false;
-
-                            // Werk het diagnosevenster ook bij als de snelheid terugvalt
-                            // onder de schakeldrempel en headingFromSource weer Dual is.
-                            UpdateAutoDualFixDiagnostic(true, true);
                         }
 
                         isFirstHeadingSet = true;
@@ -997,9 +895,6 @@ namespace AgOpenGPS
                 else
                 {
                     distanceX2 = (int)(guidanceLineDistanceOff * 0.05);
-                    // CR START
-                    distanceX2 = (int)(guidanceLineDistanceOff);
-                    // CR STOP
 
                     if (distanceX2 < -127) distanceX2 = -127;
                     else if (distanceX2 > 127) distanceX2 = 127;
@@ -1261,154 +1156,6 @@ namespace AgOpenGPS
 
             if (frameTimeRough > 80) frameTimeRough = 80;
             frameTime = frameTime * 0.90 + frameTimeRough * 0.1;
-        }
-
-        // Valideert een Fix-to-Fix-kandidaat tegen Dual en toont statuswijzigingen in AgOpenGPS.
-        // Deze functie verandert gpsHeading/fixHeading niet; ze bepaalt alleen of Fix geaccepteerd is.
-        private bool ValidateAutoDualFixCandidate(double candidateHeading)
-        {
-            double dualHeading = glm.toRadians(pn.headingTrueDual);
-            if (dualHeading < 0) dualHeading += glm.twoPI;
-            else if (dualHeading >= glm.twoPI) dualHeading -= glm.twoPI;
-
-            // Kleinste hoekverschil berekenen, zodat 359° en 1° maar 2° verschillen.
-            double headingDifference = Math.Abs(Math.Atan2(
-                Math.Sin(candidateHeading - dualHeading),
-                Math.Cos(candidateHeading - dualHeading)));
-            double differenceDegrees = glm.toDegrees(headingDifference);
-
-            // DIAGNOSTIEK: log iedere Fix-kandidaat tijdens Auto Dual-Fix-validatie.
-            // candidateHeading is de Fix-heading NA de bestaande reverse-/stuurhoekcorrecties.
-            // De reverse-status helpt verklaren of de twee kanten anders worden behandeld.
-            double dualDegreesForLog = glm.toDegrees(dualHeading);
-            double candidateDegreesForLog = glm.toDegrees(candidateHeading);
-            autoDualFixDiagnosticDualDeg = dualDegreesForLog;
-            autoDualFixDiagnosticFixDeg = candidateDegreesForLog;
-            autoDualFixDiagnosticDifferenceDeg = differenceDegrees;
-            Log.EventWriter(
-                "Auto Dual-Fix DIAG: Fix-kandidaat=" + candidateDegreesForLog.ToString("N1") + "°"
-                + ", Dual=" + dualDegreesForLog.ToString("N1") + "°"
-                + ", verschil=" + differenceDegrees.ToString("N1") + "°"
-                + ", marge=" + AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG.ToString("N1") + "°"
-                + ", isReverse=" + isReverse
-                + ", isReverseWithIMU=" + isReverseWithIMU
-                + ", isChangingDirection=" + isChangingDirection
-                + ", snelheid=" + pn.speed.ToString("N2")
-                + ", stabiel=" + autoDualFixAlignedSeconds.ToString("N2") + " s");
-
-            if (differenceDegrees > AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG)
-            {
-                autoDualFixDiagnosticReason = "AFGEWEZEN: verschil groter dan marge";
-                autoDualFixAlignedSeconds = 0.0;
-
-                // Alleen melden wanneer eerder geaccepteerde Fix weer wordt afgekeurd.
-                if (autoDualFixUiAccepted)
-                {
-                    autoDualFixUiAccepted = false;
-                    double dualDegrees = glm.toDegrees(dualHeading);
-                    double fixDegrees = glm.toDegrees(candidateHeading);
-                    string detail = "Fix=" + fixDegrees.ToString("N1") + "°, Dual=" + dualDegrees.ToString("N1")
-                        + "°, verschil=" + differenceDegrees.ToString("N1") + "°";
-                    Log.EventWriter("Auto Dual-Fix: Fix afgekeurd; " + detail + ". Terug naar Dual.");
-                    TimedMessageBox(2600, "Auto Dual-Fix", "Fix afgekeurd; " + detail + ". Dual actief.");
-                }
-                return false;
-            }
-
-            // Alleen tijd van deze update meetellen, maximaal 0,5 s per update.
-            // Zo kan een lange pauze niet ten onrechte als stabiele tijd tellen.
-            double stabilityDt = Math.Max(0.0, Math.Min(timeSliceOfLastFix, 0.5));
-            autoDualFixAlignedSeconds += stabilityDt;
-
-            bool accepted = autoDualFixAlignedSeconds >= AUTO_DUAL_FIX_STABLE_SECONDS;
-            autoDualFixDiagnosticReason = accepted
-                ? "GELDIG: Fix geaccepteerd"
-                : "VALIDEREN: heading binnen marge";
-            if (accepted && !autoDualFixUiAccepted)
-            {
-                autoDualFixUiAccepted = true;
-                double dualDegrees = glm.toDegrees(dualHeading);
-                double fixDegrees = glm.toDegrees(candidateHeading);
-                string detail = "Fix=" + fixDegrees.ToString("N1") + "°, Dual=" + dualDegrees.ToString("N1")
-                    + "°, verschil=" + differenceDegrees.ToString("N1") + "°";
-                Log.EventWriter("Auto Dual-Fix: Fix geaccepteerd na 1 seconde binnen " + AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG.ToString("N0") + " graden. " + detail + ". Direct naar Fix geschakeld.");
-                TimedMessageBox(2800, "Auto Dual-Fix", "Fix geaccepteerd; " + detail + ". Direct naar Fix geschakeld.");
-            }
-
-            return accepted;
-        }
-
-        private void UpdateAutoDualFixDiagnostic(bool enabled, bool usingDualHeading)
-        {
-            if (!enabled)
-            {
-                autoDualFixDiagnosticUserClosed = false;
-                if (autoDualFixDiagnosticForm != null && !autoDualFixDiagnosticForm.IsDisposed)
-                    autoDualFixDiagnosticForm.Hide();
-                return;
-            }
-
-            // Als de gebruiker het diagnosevenster sluit, niet bij elke GPS-update opnieuw openen.
-            if (autoDualFixDiagnosticUserClosed)
-                return;
-
-            if (autoDualFixDiagnosticForm == null || autoDualFixDiagnosticForm.IsDisposed)
-            {
-                autoDualFixDiagnosticForm = new Form();
-                autoDualFixDiagnosticForm.Text = "Auto Dual-Fix - diagnose";
-                autoDualFixDiagnosticForm.StartPosition = FormStartPosition.CenterScreen;
-                autoDualFixDiagnosticForm.FormBorderStyle = FormBorderStyle.FixedToolWindow;
-                autoDualFixDiagnosticForm.ShowInTaskbar = false;
-                // Niet TopMost: het venster mag de bediening van AgOpenGPS niet overnemen.
-                autoDualFixDiagnosticForm.TopMost = false;
-                autoDualFixDiagnosticForm.ClientSize = new Size(470, 310);
-
-                autoDualFixDiagnosticLabel = new Label();
-                autoDualFixDiagnosticLabel.Dock = DockStyle.Fill;
-                autoDualFixDiagnosticLabel.Padding = new Padding(14);
-                autoDualFixDiagnosticLabel.Font = new Font("Consolas", 11F, FontStyle.Regular);
-                autoDualFixDiagnosticLabel.TextAlign = ContentAlignment.MiddleLeft;
-                autoDualFixDiagnosticLabel.AutoSize = false;
-                autoDualFixDiagnosticForm.Controls.Add(autoDualFixDiagnosticLabel);
-                autoDualFixDiagnosticForm.FormClosed += (sender, args) =>
-                {
-                    autoDualFixDiagnosticUserClosed = true;
-                    autoDualFixDiagnosticForm = null;
-                    autoDualFixDiagnosticLabel = null;
-                };
-            }
-
-            string activeSource = usingDualHeading ? "DUAL ACTIEF" : "FIX ACTIEF";
-            string dualText = double.IsNaN(autoDualFixDiagnosticDualDeg)
-                ? "n/b" : autoDualFixDiagnosticDualDeg.ToString("N1") + "°";
-            string fixText = double.IsNaN(autoDualFixDiagnosticFixDeg)
-                ? "n/b" : autoDualFixDiagnosticFixDeg.ToString("N1") + "°";
-            string diffText = double.IsNaN(autoDualFixDiagnosticDifferenceDeg)
-                ? "n/b" : autoDualFixDiagnosticDifferenceDeg.ToString("N1") + "°";
-            string stableText = autoDualFixAlignedSeconds.ToString("N2") + " / "
-                + AUTO_DUAL_FIX_STABLE_SECONDS.ToString("N2") + " s";
-
-            autoDualFixDiagnosticLabel.ForeColor = usingDualHeading
-                ? Color.ForestGreen
-                : Color.Firebrick;
-            autoDualFixDiagnosticLabel.Text =
-                "ACTIEVE BRON : " + activeSource + Environment.NewLine + Environment.NewLine +
-                "Dual-heading : " + dualText + Environment.NewLine +
-                "Fix-kandidaat: " + fixText + Environment.NewLine +
-                "Hoekverschil : " + diffText + Environment.NewLine +
-                "Marge        : " + AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG.ToString("N1") + "°" + Environment.NewLine +
-                "Stabiele tijd: " + stableText + Environment.NewLine + Environment.NewLine +
-                "Snelheid     : " + pn.speed.ToString("N2") + " km/u" + Environment.NewLine +
-                "Achteruit    : " + isReverse + Environment.NewLine +
-                "Reverse IMU  : " + isReverseWithIMU + Environment.NewLine +
-                "Richtingswissel: " + isChangingDirection + Environment.NewLine + Environment.NewLine +
-                "STATUS: " + (usingDualHeading && Math.Abs(pn.speed) <= ahrs.autoSwitchDualFixSpeed
-                    ? "DUAL: onder schakelsnelheid"
-                    : autoDualFixDiagnosticReason);
-
-            if (!autoDualFixDiagnosticForm.Visible)
-                autoDualFixDiagnosticForm.Show(this);
-            // Niet telkens BringToFront aanroepen: dat zou klikken in AgOpenGPS blokkeren.
         }
 
         private void TheRest()
