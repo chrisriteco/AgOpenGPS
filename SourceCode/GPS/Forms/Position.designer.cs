@@ -117,12 +117,8 @@ namespace AgOpenGPS
         private double autoDualFixDiagnosticFixDeg = double.NaN;
         private double autoDualFixDiagnosticDifferenceDeg = double.NaN;
         private double autoDualFixDiagnosticRawFixDeg = double.NaN;
-        private double autoDualFixDiagnosticMinus90Deg = double.NaN;
-        private double autoDualFixDiagnosticPlus90Deg = double.NaN;
-        private double autoDualFixDiagnosticPlus180Deg = double.NaN;
-        private double autoDualFixDiagnosticMinus90DiffDeg = double.NaN;
-        private double autoDualFixDiagnosticPlus90DiffDeg = double.NaN;
-        private double autoDualFixDiagnosticPlus180DiffDeg = double.NaN;
+        private double autoDualFixDiagnosticImuCorrectedDeg = double.NaN;
+        private double autoDualFixDiagnosticReverseDeltaDeg = double.NaN;
         private string autoDualFixDiagnosticReason = "Wachten op Fix-kandidaat";
         private bool autoDualFixDiagnosticUserClosed = false;
         // Detecteer wanneer een andere AB-lijn wordt geopend, zodat diagnose opnieuw verschijnt.
@@ -479,6 +475,8 @@ namespace AgOpenGPS
                             {
                                 ////what is angle between the last valid heading before stopping and one just now
                                 delta = Math.Abs(Math.PI - Math.Abs(Math.Abs(newGPSHeading - imuCorrected) - Math.PI));
+                                autoDualFixDiagnosticImuCorrectedDeg = glm.toDegrees(imuCorrected);
+                                autoDualFixDiagnosticReverseDeltaDeg = glm.toDegrees(delta);
 
                                 //ie change in direction
                                 if (delta > 1.57) //
@@ -1305,29 +1303,6 @@ namespace AgOpenGPS
                 Math.Cos(candidateHeading - dualHeading)));
             double differenceDegrees = glm.toDegrees(headingDifference);
 
-            // Diagnose-alternatieven: controleer of een as-/richtingconventie (+/-90°)
-            // of een omgekeerde rijrichting (+180°) het vaste verschil verklaart.
-            double minus90Heading = candidateHeading - glm.PIBy2;
-            if (minus90Heading < 0) minus90Heading += glm.twoPI;
-            double plus90Heading = candidateHeading + glm.PIBy2;
-            if (plus90Heading >= glm.twoPI) plus90Heading -= glm.twoPI;
-            double plus180Heading = candidateHeading + Math.PI;
-            if (plus180Heading >= glm.twoPI) plus180Heading -= glm.twoPI;
-
-            double minus90Difference = Math.Abs(Math.Atan2(
-                Math.Sin(minus90Heading - dualHeading), Math.Cos(minus90Heading - dualHeading)));
-            double plus90Difference = Math.Abs(Math.Atan2(
-                Math.Sin(plus90Heading - dualHeading), Math.Cos(plus90Heading - dualHeading)));
-            double plus180Difference = Math.Abs(Math.Atan2(
-                Math.Sin(plus180Heading - dualHeading), Math.Cos(plus180Heading - dualHeading)));
-
-            autoDualFixDiagnosticMinus90Deg = glm.toDegrees(minus90Heading);
-            autoDualFixDiagnosticPlus90Deg = glm.toDegrees(plus90Heading);
-            autoDualFixDiagnosticPlus180Deg = glm.toDegrees(plus180Heading);
-            autoDualFixDiagnosticMinus90DiffDeg = glm.toDegrees(minus90Difference);
-            autoDualFixDiagnosticPlus90DiffDeg = glm.toDegrees(plus90Difference);
-            autoDualFixDiagnosticPlus180DiffDeg = glm.toDegrees(plus180Difference);
-
             // DIAGNOSTIEK: log iedere Fix-kandidaat tijdens Auto Dual-Fix-validatie.
             // candidateHeading is de Fix-heading NA de bestaande reverse-/stuurhoekcorrecties.
             // De reverse-status helpt verklaren of de twee kanten anders worden behandeld.
@@ -1340,9 +1315,6 @@ namespace AgOpenGPS
                 "Auto Dual-Fix DIAG: Fix-kandidaat=" + candidateDegreesForLog.ToString("N1") + "°"
                 + ", Dual=" + dualDegreesForLog.ToString("N1") + "°"
                 + ", verschil=" + differenceDegrees.ToString("N1") + "°"
-                + ", diff(-90)=" + autoDualFixDiagnosticMinus90DiffDeg.ToString("N1") + "°"
-                + ", diff(+90)=" + autoDualFixDiagnosticPlus90DiffDeg.ToString("N1") + "°"
-                + ", diff(+180)=" + autoDualFixDiagnosticPlus180DiffDeg.ToString("N1") + "°"
                 + ", marge=" + AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG.ToString("N1") + "°"
                 + ", isReverse=" + isReverse
                 + ", isReverseWithIMU=" + isReverseWithIMU
@@ -1413,7 +1385,7 @@ namespace AgOpenGPS
                 autoDualFixDiagnosticForm.ShowInTaskbar = false;
                 // Niet TopMost: het venster mag de bediening van AgOpenGPS niet overnemen.
                 autoDualFixDiagnosticForm.TopMost = false;
-                autoDualFixDiagnosticForm.ClientSize = new Size(470, 370);
+                autoDualFixDiagnosticForm.ClientSize = new Size(470, 310);
 
                 autoDualFixDiagnosticLabel = new Label();
                 autoDualFixDiagnosticLabel.Dock = DockStyle.Fill;
@@ -1439,12 +1411,6 @@ namespace AgOpenGPS
                 ? "n/b" : autoDualFixDiagnosticDifferenceDeg.ToString("N1") + "°";
             string rawFixText = double.IsNaN(autoDualFixDiagnosticRawFixDeg)
                 ? "n/b" : autoDualFixDiagnosticRawFixDeg.ToString("N1") + "°";
-            string minus90Text = double.IsNaN(autoDualFixDiagnosticMinus90Deg)
-                ? "n/b" : autoDualFixDiagnosticMinus90Deg.ToString("N1") + "° (verschil " + autoDualFixDiagnosticMinus90DiffDeg.ToString("N1") + "°)";
-            string plus90Text = double.IsNaN(autoDualFixDiagnosticPlus90Deg)
-                ? "n/b" : autoDualFixDiagnosticPlus90Deg.ToString("N1") + "° (verschil " + autoDualFixDiagnosticPlus90DiffDeg.ToString("N1") + "°)";
-            string plus180Text = double.IsNaN(autoDualFixDiagnosticPlus180Deg)
-                ? "n/b" : autoDualFixDiagnosticPlus180Deg.ToString("N1") + "° (verschil " + autoDualFixDiagnosticPlus180DiffDeg.ToString("N1") + "°)";
             string stableText = autoDualFixAlignedSeconds.ToString("N2") + " / "
                 + AUTO_DUAL_FIX_STABLE_SECONDS.ToString("N2") + " s";
 
@@ -1459,14 +1425,12 @@ namespace AgOpenGPS
                 "Verschil werkelijk : " + diffText + Environment.NewLine +
                 "Marge              : " + AUTO_DUAL_FIX_HEADING_TOLERANCE_DEG.ToString("N1") + "°" + Environment.NewLine +
                 "Ruwe Fix-to-Fix    : " + rawFixText + " (vóór correcties)" + Environment.NewLine +
-                "OPTIES: verschil met Dual als kandidaat verschoven wordt" + Environment.NewLine +
-                "Fix - 90°          : " + minus90Text + Environment.NewLine +
-                "Fix + 90°          : " + plus90Text + Environment.NewLine +
-                "Fix + 180°         : " + plus180Text + Environment.NewLine +
+                "IMU gecorrigeerd   : " + (double.IsNaN(autoDualFixDiagnosticImuCorrectedDeg) ? "n/b" : autoDualFixDiagnosticImuCorrectedDeg.ToString("N1") + "°") + Environment.NewLine +
+                "Reverse delta      : " + (double.IsNaN(autoDualFixDiagnosticReverseDeltaDeg) ? "n/b" : autoDualFixDiagnosticReverseDeltaDeg.ToString("N1") + "°") + " (grens 90°)" + Environment.NewLine +
                 "Stabiele tijd      : " + stableText + Environment.NewLine + Environment.NewLine +
-                "Snelheid     : " + pn.speed.ToString("N2") + " km/u" + Environment.NewLine +
-                "Achteruit    : " + isReverse + Environment.NewLine +
-                "Reverse IMU  : " + isReverseWithIMU + Environment.NewLine +
+                "Snelheid       : " + pn.speed.ToString("N2") + " km/u" + Environment.NewLine +
+                "Achteruit      : " + isReverse + Environment.NewLine +
+                "Reverse IMU    : " + isReverseWithIMU + Environment.NewLine +
                 "Richtingswissel: " + isChangingDirection + Environment.NewLine + Environment.NewLine +
                 "STATUS: " + (usingDualHeading && Math.Abs(pn.speed) <= ahrs.autoSwitchDualFixSpeed
                     ? "DUAL: onder schakelsnelheid"
